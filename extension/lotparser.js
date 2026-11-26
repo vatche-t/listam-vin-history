@@ -2,7 +2,7 @@
  * Used by the offscreen document (HTML fetched by the service worker) and injected into the
  * helper tab (live page). Must stay self-contained: no references to LAVC_CONFIG. */
 function parseBidCarsLot(doc, expectedVin, pageUrl) {
-  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const clean = (s) => typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "";
 
   let ld = null;
   for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
@@ -16,12 +16,13 @@ function parseBidCarsLot(doc, expectedVin, pageUrl) {
   }
 
   const ogUrl = doc.querySelector('meta[property="og:url"]')?.content || "";
-  const url = (ld && ld.url) || ogUrl || pageUrl || (doc.location ? doc.location.href : "");
+  const canonicalUrl = clean(ld?.url) || ogUrl;
+  const url = canonicalUrl || pageUrl || (doc.location ? doc.location.href : "");
   const lotId = (url.match(/\/lot\/([01]-\d+)/) || [])[1];
-  const vin = clean((ld && ld.vehicleIdentificationNumber) || (url.match(/([A-HJ-NPR-Z0-9]{17})(?:[/?#]|$)/) || [])[1]).toUpperCase();
+  const vin = (clean(ld?.vehicleIdentificationNumber) || canonicalUrl.match(/([A-HJ-NPR-Z0-9]{17})(?:[/?#]|$)/i)?.[1] || "").toUpperCase();
 
-  if (!lotId) return null;
-  if (expectedVin && vin && vin !== expectedVin.toUpperCase()) {
+  if (!lotId || !/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) return null;
+  if (expectedVin && vin !== expectedVin.toUpperCase()) {
     return { mismatch: true, vin, lotId, url };
   }
 
@@ -97,11 +98,14 @@ function parseBidCarsLot(doc, expectedVin, pageUrl) {
 
   const scriptsText = [...doc.querySelectorAll("script:not([src])")].map((s) => s.textContent).join("\n");
   const archived = !!doc.querySelector("#archieved-message") || /var\s+isArchived\s*=\s*1/.test(scriptsText);
+  const knownDamage = Array.isArray(ld?.knownVehicleDamages)
+    ? ld.knownVehicleDamages.map(clean).filter(Boolean).join(" / ") : clean(ld?.knownVehicleDamages);
 
   return {
     id: lotId,
     url: url.split("?")[0],
     vin,
+    vinVerified: true,
     title,
     auction: lotId.startsWith("0-") ? "IAAI" : "Copart",
     archived,
@@ -110,7 +114,7 @@ function parseBidCarsLot(doc, expectedVin, pageUrl) {
     seller: headerValue("Seller:"),
     saleDocument: headerValue("Sale Document:"),
     odometerMi,
-    primaryDamage: optionValue("Primary damage") || (ld && ld.knownVehicleDamages) || undefined,
+    primaryDamage: optionValue("Primary damage") || knownDamage || undefined,
     secondaryDamage: optionValue("Secondary damage"),
     key: optionValue("Key"),
     startCode: optionValue("Start code"),

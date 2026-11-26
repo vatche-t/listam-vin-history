@@ -1,7 +1,8 @@
-importScripts("config.js");
+importScripts("config.js", "listing.js");
 
 const C = LAVC_CONFIG;
 const B = C.BIDCARS;
+const L = C.LISTAM;
 
 const inflight = new Map();
 const tabStatus = new Map();
@@ -14,6 +15,8 @@ async function cacheGet(vin) {
   const key = "vin:" + vin;
   const entry = (await chrome.storage.local.get(key))[key];
   if (!entry) return null;
+  // Older cached matches could take the VIN from the page URL alone.
+  if (entry.status === "found" && (entry.lot?.vinVerified !== true || entry.lot.vin !== vin)) return null;
   const ttl = entry.status === "found" ? C.CACHE_TTL_FOUND_MS : C.CACHE_TTL_NOT_FOUND_MS;
   return Date.now() - entry.checkedAt < ttl ? entry : null;
 }
@@ -31,7 +34,8 @@ async function cacheClear() {
 /* ---------------------------------------------------------------- lookup entry point */
 
 function lookup(vin, force) {
-  if (inflight.has(vin)) return inflight.get(vin);
+  const current = inflight.get(vin);
+  if (current) return force ? current.then((result) => result.fromCache ? lookup(vin, true) : result) : current;
   const p = (async () => {
     if (!force) {
       const cached = await cacheGet(vin);
@@ -361,10 +365,59 @@ async function fetchImageAsDataUrl(url) {
   return `data:${blob.type || "image/jpeg"};base64,${btoa(bin)}`;
 }
 
-/* ---------------------------------------------------------------- Codex bridge */
+/* ---------------------------------------------------------------- MCP bridge */
 
 let mcpPort;
 let mcpState = "disconnected";
+
+async function openListing(itemId) {
+  const tabs = await chrome.tabs.query({ url: L.itemMatches });
+  for (const tab of tabs) {
+    if (!Number.isInteger(tab.id)) continue;
+    const url = typeof tab.url === "string" ? new URL(tab.url) : null;
+    if (url?.origin !== L.origin || LAVC_LISTING.itemId(url.pathname) !== itemId) continue;
+    const listing = await chrome.tabs.sendMessage(tab.id, { type: "readMcpListing", itemId }, { frameId: 0 }).catch(() => null);
+    if (listing && listing.status !== "listing_unavailable") return listing;
+  }
+}
+
+async function readListing(itemId, port) {
+  let html;
+  try {
+    const listing = await openListing(itemId);
+    if (listing || mcpPort !== port) return listing;
+    const response = await fetch(L.itemUrl(itemId), {
+      credentials: "omit", redirect: "error", signal: AbortSignal.timeout(C.FETCH_TIMEOUT_MS),
+    });
+    if (response.ok && response.body && response.headers.get("content-type")?.includes("text/html")) {
+      const decoder = new TextDecoder();
+      let bytes = 0;
+      html = "";
+      for await (const chunk of response.body) {
+        bytes += chunk.byteLength;
+        if (bytes > L.maxListingBytes || mcpPort !== port) return { status: "listing_unavailable" };
+        html += decoder.decode(chunk, { stream: true });
+      }
+      html += decoder.decode();
+    }
+  } catch (_) {
+    return { status: "listing_unavailable" };
+  }
+  if (!html || mcpPort !== port) return { status: "listing_unavailable" };
+  await ensureOffscreen();
+  const parsed = await chrome.runtime.sendMessage({ target: "offscreen", type: "parseListing", html });
+  return parsed?.ok && parsed.listing ? parsed.listing : { status: "error" };
+}
+
+async function checkListing(itemId, port) {
+  const listing = await readListing(itemId, port);
+  if (mcpPort !== port) return;
+  if (listing.status !== "ok" || typeof listing.vin !== "string" || !C.VIN_RE.test(listing.vin)) return { itemId, listing };
+  const auction = await lookup(listing.vin, false).catch(() => ({ status: "error", vin: listing.vin }));
+  const comparison = auction.status === "found" && auction.lot?.vin === listing.vin
+    ? LAVC_LISTING.compare(listing, auction.lot) : undefined;
+  return { itemId, listing, auction, comparison };
+}
 
 function setMcpState(state) {
   mcpState = state;
@@ -379,11 +432,21 @@ function connectMcp() {
     setMcpState("connecting");
     port.onMessage.addListener(async (msg) => {
       if (mcpPort !== port) return;
-      if (msg?.type === "ready") return setMcpState("connected");
-      if (mcpState !== "connected" || msg?.type !== "lookup" ||
-          typeof msg.id !== "string" || typeof msg.vin !== "string" || !C.VIN_RE.test(msg.vin)) return;
+      if (msg?.type === "ready") {
+        if (msg.listingHandshake === true) {
+          try { port.postMessage({ type: "listingCapability" }); } catch (_) {}
+        } else setMcpState("connected");
+        return;
+      }
+      if (msg?.type === "listingReady") return setMcpState("connected");
+      if (mcpState !== "connected" || typeof msg?.id !== "string") return;
 
-      const result = await lookup(msg.vin, false).catch(() => ({ status: "error", vin: msg.vin }));
+      let result;
+      if (msg.type === "lookup" && typeof msg.vin === "string" && C.VIN_RE.test(msg.vin)) {
+        result = await lookup(msg.vin, false).catch(() => ({ status: "error", vin: msg.vin }));
+      } else if (msg.type === "checkListing" && typeof msg.itemId === "string" && L.itemIdRe.test(msg.itemId)) {
+        result = await checkListing(msg.itemId, port).catch(() => ({ itemId: msg.itemId, listing: { status: "error" } }));
+      } else return;
       if (mcpPort === port) {
         try {
           port.postMessage({ type: "lookupResult", id: msg.id, result });

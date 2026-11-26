@@ -3,8 +3,7 @@
   "name": "List.am VIN History",
   "version": "1.0.0",
   "description": "Shows bid.cars auction history and photos next to list.am car listings.",
-  "permissions": ["storage", "scripting", "tabs", "offscreen"],
-  "optional_permissions": ["nativeMessaging"],
+  "permissions": ["storage", "scripting", "tabs", "offscreen", "nativeMessaging"],
   "host_permissions": [
     "https://www.list.am/*",
     "https://bid.cars/*",
@@ -17,7 +16,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.list.am/item/*", "https://www.list.am/*/item/*"],
-      "js": ["config.js", "listam.js"],
+      "js": ["config.js", "listing.js", "listam.js"],
       "css": ["listam.css"],
       "run_at": "document_idle"
     }

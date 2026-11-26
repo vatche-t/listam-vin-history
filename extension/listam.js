@@ -4,7 +4,7 @@
 
   const C = LAVC_CONFIG;
   const L = C.LISTAM;
-  const MI_TO_KM = 1.609344;
+  const Listing = LAVC_LISTING;
 
   const state = {
     vin: null,
@@ -19,27 +19,6 @@
 
   /* ------------------------------------------------------------ page reading */
 
-  function attrTileByIcon(iconSelector) {
-    return document.querySelector(iconSelector)?.closest(L.attrTile) || null;
-  }
-
-  function findVin() {
-    let tile = attrTileByIcon(L.vinIcon);
-    if (!tile) {
-      for (const p of document.querySelectorAll(`${L.attrTile} .attr-info-wraper p:not(${L.attrValue})`)) {
-        if (p.textContent.trim().toUpperCase() === "VIN") {
-          tile = p.closest(L.attrTile);
-          break;
-        }
-      }
-    }
-    const valueEl = tile?.querySelector(L.attrValue);
-    if (!valueEl) return { status: "no_vin" };
-    const raw = valueEl.textContent.trim();
-    const vin = raw.replace(/\s+/g, "").toUpperCase();
-    return C.VIN_RE.test(vin) ? { status: "ok", vin, tile, valueEl } : { status: "invalid_vin", raw, tile, valueEl };
-  }
-
   function listamPhotos() {
     for (const s of document.scripts) {
       const m = s.textContent.match(L.galleryInitRe);
@@ -50,23 +29,6 @@
       }
     }
     return [...document.querySelectorAll(`${L.gallery} img[src]`)].map((i) => i.src);
-  }
-
-  function listamMileageKm() {
-    const text = attrTileByIcon(L.mileageIcon)?.querySelector(L.attrValue)?.textContent || "";
-    const n = parseInt(text.replace(/[^\d]/g, ""), 10);
-    if (Number.isNaN(n)) return null;
-    return listamMileageIsMiles() ? Math.round(n * MI_TO_KM) : n;
-  }
-
-  function listamMileageIsMiles() {
-    const text = attrTileByIcon(L.mileageIcon)?.querySelector(L.attrValue)?.textContent || "";
-    return /մղոն|миль|\bmi\b|miles/i.test(text);
-  }
-
-  function listamSaysNotDamaged() {
-    const text = (attrTileByIcon(L.conditionIcon)?.querySelector(L.attrValue)?.textContent || "").trim().toLowerCase();
-    return L.notDamagedTexts.includes(text);
   }
 
   /* ------------------------------------------------------------ messaging */
@@ -354,18 +316,14 @@
     return Number(n).toLocaleString("en-US");
   }
 
-  function warningsFor(lot) {
+  function warningsFor(lot, listing, comparison) {
     const out = [];
-    const damage = (lot.primaryDamage || "").trim();
-    if (damage && !/^(-|none|normal wear.*|no damage)$/i.test(damage) && listamSaysNotDamaged()) {
-      out.push(`Listing says "not damaged", but the auction recorded damage: ${damage}${lot.secondaryDamage && lot.secondaryDamage !== "-" ? " / " + lot.secondaryDamage : ""}.`);
+    if (comparison.historicalDamage) {
+      const damage = [lot.primaryDamage, lot.secondaryDamage].filter((value) => value && value !== "-").join(" / ");
+      out.push(`Listing says "not damaged". The auction recorded damage: ${damage}.`);
     }
-    const listKm = listamMileageKm();
-    if (lot.odometerMi && listKm !== null) {
-      const auctionKm = Math.round(lot.odometerMi * MI_TO_KM);
-      if (listKm + 1000 < auctionKm) {
-        out.push(`Mileage on list.am (${fmtNum(listKm)} km) is lower than at auction (${fmtNum(auctionKm)} km).`);
-      }
+    if (comparison.lowerMileage) {
+      out.push(`Mileage on list.am (${fmtNum(listing.mileageKm)} km) is lower than at auction (${fmtNum(comparison.auctionKm)} km).`);
     }
     if (/salvage|rebuild|junk|parts only|non-repairable|certificate of destruction/i.test(lot.saleDocument || "")) {
       out.push(`Auction title type: ${lot.saleDocument}.`);
@@ -496,8 +454,9 @@
     if (!lot) return;
 
     const damage = [lot.primaryDamage, lot.secondaryDamage].filter((d) => d && d !== "-").join(" / ");
-    const damaged = !!damage && !/^(none|normal wear.*|no damage)$/i.test(lot.primaryDamage || "");
-    const odoKm = lot.odometerMi ? Math.round(lot.odometerMi * MI_TO_KM) : null;
+    const listing = Listing.details(document);
+    const comparison = Listing.compare(listing, lot);
+    const { damaged, auctionKm: odoKm } = comparison;
     const salvage = /salvage|rebuild|junk|parts only|non-repairable|destruction/i.test(lot.saleDocument || "");
 
     const tiles = [
@@ -525,7 +484,7 @@
       "Auction history · ",
       h("a", { href: lot.url, target: "_blank", rel: "noopener" }, "bid.cars ↗")
     );
-    const warnings = warningsFor(lot);
+    const warnings = warningsFor(lot, listing, comparison);
     const warnBox = warnings.length ? h("div", { className: "lavc-warnings" }, ...warnings.map((w) => h("div", { className: "lavc-warn" }, "⚠ ", w))) : null;
     const grid = h("div", { className: "attr g new lavc-attr" }, ...tiles);
 
@@ -535,17 +494,15 @@
     carInfo.after(...nodes);
     added.push(...nodes);
 
-    const listKm = listamMileageKm();
-    if (lot.odometerMi && listKm !== null) {
-      const inMiles = listamMileageIsMiles();
+    if (odoKm !== null && listing.mileageKm !== null) {
       addComparison(
-        attrTileByIcon(L.mileageIcon),
-        `bid.cars: ${inMiles ? fmtNum(lot.odometerMi) + " mi" : fmtNum(odoKm) + " km"} (${lot.saleDate || "auction"})`,
-        listKm + 1000 < odoKm
+        Listing.attrTileByIcon(document, L.mileageIcon),
+        `bid.cars: ${listing.inMiles ? fmtNum(lot.odometerMi) + " mi" : fmtNum(odoKm) + " km"} (${lot.saleDate || "auction"})`,
+        comparison.lowerMileage
       );
     }
     if (damage) {
-      addComparison(attrTileByIcon(L.conditionIcon), `bid.cars: ${damaged ? "damaged · " : ""}${damage}`, damaged && listamSaysNotDamaged());
+      addComparison(Listing.attrTileByIcon(document, L.conditionIcon), `bid.cars: ${damaged ? "damaged · " : ""}${damage}`, comparison.historicalDamage);
     }
   }
 
@@ -760,7 +717,7 @@
     Object.assign(state.settings, stored.settings || {});
 
     const galleryWrapper = document.querySelector(L.galleryWrapper);
-    const found = findVin();
+    const found = Listing.findVin(document);
     state.vinTile = found.tile || null;
     state.vinValueEl = found.valueEl || null;
 
@@ -808,6 +765,9 @@
     if (msg?.type === "recheck") {
       runLookup(true);
       sendResponse({ ok: true });
+    } else if (msg?.type === "readMcpListing" && typeof msg.itemId === "string" &&
+               Listing.itemId(location.pathname) === msg.itemId) {
+      sendResponse(Listing.read(document));
     }
     return false;
   });

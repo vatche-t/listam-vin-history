@@ -39,7 +39,15 @@ try {
   await replaceFile(join(directory, `${HOST_NAME}.json`), JSON.stringify(manifest, null, 2) + "\n", 0o600);
 
   const server = fileURLToPath(new URL("server.mjs", import.meta.url));
-  console.log(`Browser bridge installed. Use these settings in your Codex config (~/.codex/config.toml):\n
+  const settings = { mcpServers: { "listam-vin-history": { command: process.execPath, args: [server] } } };
+  console.log(`Browser bridge installed. Open the extension popup and choose Connect MCP.
+
+JSON settings for Claude Desktop, Claude Code, Cursor, and Gemini CLI
+
+${JSON.stringify(settings, null, 2)}
+
+Codex settings for ~/.codex/config.toml
+
 [mcp_servers.listam-vin-history]
 command = ${JSON.stringify(process.execPath)}
 args = [${JSON.stringify(server)}]

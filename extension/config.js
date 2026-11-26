@@ -25,6 +25,13 @@ var LAVC_CONFIG = {
   },
 
   LISTAM: {
+    origin: "https://www.list.am",
+    itemIdRe: /^\d{1,12}$/,
+    itemPathRe: /^\/(?:[a-z]{2}\/)?item\/(\d{1,12})\/?$/,
+    itemMatches: ["https://www.list.am/item/*", "https://www.list.am/*/item/*"],
+    itemUrl: (id) => `https://www.list.am/item/${id}`,
+    itemContent: "#pcontent .vi",
+    maxListingBytes: 4 * 1024 * 1024,
     pageGrid: "#main .pmain",
     sellerColumn: "#main .pmain > #pmenu",
     saveStar: "#sstar",

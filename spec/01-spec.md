@@ -37,7 +37,7 @@
 | FR-11 | Results are cached in `chrome.storage.local`, keyed by VIN. Found results are kept 30 days, "not found" results 3 days, errors are not cached. |
 | FR-12 | The toolbar popup shows the status for the current tab (VIN, found / not found / error), a "Re-check" button that ignores the cache, and a "Clear cache" button. |
 | FR-13 | Odometer is shown in both miles and kilometers so it can be compared directly to the list.am mileage (which is in km). |
-| FR-14 | If the list.am mileage is lower than the auction odometer, show a warning ("Mileage on list.am is lower than at auction"). Same for "not damaged" on list.am vs. damage recorded at auction. |
+| FR-14 | Show a mileage warning when the list.am reading is more than 1,000 km below the auction reading after unit conversion. Also flag past damage recorded at auction when the listing says "not damaged". |
 
 ## 3. Non-functional requirements
 

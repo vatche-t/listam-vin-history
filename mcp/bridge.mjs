@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 export const HOST_NAME = "io.github.mysticcode99.listam_vin_history";
 export const VIN_PATTERN = /^[A-HJ-NPR-Z0-9]{17}$/;
+export const ITEM_ID_PATTERN = /^\d{1,12}$/;
 export const LOOKUP_TIMEOUT_MS = 115_000;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 
